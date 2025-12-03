@@ -114,7 +114,7 @@ app.get("/vehicle", async (req, res) => {
 app.post("/vehicle", async(req, res) =>{
   const {valid, errors} = validateVehiclePayload(req.body);
 
-  if (!valid){ //the json was parsed fine but it's not a valid vehicle
+  if (!valid){ //the json was parsed fine but it's not a valid vehicle object
     return res.status(422).json({
       error: "Validation failed",
       details: errors
@@ -270,7 +270,7 @@ app.put("/vehicle/:vin", async (req, res)=>{
 
 
 app.delete("/vehicle/:vin", async (req, res)=>{
-  const { vin } = req.params.vin;
+  const vin = req.params.vin;
   const deleteSql = `
   DELETE FROM vehicles
     WHERE LOWER(vin) = LOWER($1)
@@ -294,7 +294,7 @@ app.delete("/vehicle/:vin", async (req, res)=>{
 
 export { app, pool };
 if (process.env.NODE_ENV !== "test") {
-app.listen(port, hostname, function () {
+  app.listen(port, hostname, function () {
   console.log(`http://${hostname}:${port}`);
 });
 }
