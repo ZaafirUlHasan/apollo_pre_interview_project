@@ -12,11 +12,33 @@ const pool = new Pool({
 
 const app = express();
 app.use(express.json());
+app.use((err, req, res, next)=>{
+  //middleware to check for express json body parsing errors and to return a nicely formatted json instead of html
+  if (err instanceof SyntaxError && err.status === 400 && "body" in err){
+    console.error("Invalid JSON recieved:", err.message);
+    return res.status(400).json({
+      error: "Request body must be valid JSON"
+    })
+  }
+  next(err); //other errors get passed on
+})
 
 let port = process.env.PORT || 3000;
 let hostname = process.env.HOSTNAME || "localhost";
 
-
+function rowToVehicle(row) {
+  return {
+    id: row.id,
+    vin: row.vin,
+    manufacturer: row.manufacturer,
+    description: row.description,
+    horsePower: row.horse_power,
+    modelName: row.model_name,
+    modelYear: row.model_year,
+    purchasePrice: Number(row.purchase_price),
+    fuelType: row.fuel_type
+  }
+}
 function validateVehiclePayload(payload) {
   const errors = {};
   const addError = (field, message) => {
@@ -25,6 +47,13 @@ function validateVehiclePayload(payload) {
     }
     errors[field].push(message);
   };
+
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    return {
+      valid: false,
+      errors: { _global: ["Body must be a JSON object"] },
+    };
+  }
 
   const requiredStrings = ["vin", "manufacturer", "modelName", "fuelType"];
 
@@ -36,7 +65,7 @@ function validateVehiclePayload(payload) {
 
   const requiredNumbers = ["horsePower", "modelYear", "purchasePrice"];
   for (const field of requiredNumbers) {
-    if (typeof payload[field] !== "number") {
+    if (typeof payload[field] !== "number" || Number.isNaN(payload[field])){
       addError(field, "Required number field missing");
     }
   }
@@ -70,6 +99,101 @@ app.get("/health", (req, res) => {
   res.json({ status: "ok" });
 });
 
+app.get("/vehicle", async (req, res) => {
+  try {
+    const result = await pool.query("SELECT * FROM vehicles ORDER BY id ASC");
+    const vehicles = result.rows.map(rowToVehicle);
+    res.json(vehicles);
+  } catch (error) {
+    console.log("Error fetching vehicles", error);
+    res.status(500).json({error: "Internal Server Error"});
+  }
+})
+
+
+app.post("/vehicle", async(req, res) =>{
+  const {valid, errors} = validateVehiclePayload(req.body);
+
+  if (!valid){ //the json was parsed fine but it's not a valid vehicle
+    return res.status(422).json({
+      error: "Validation failed",
+      details: errors
+    });
+  }
+
+  const {
+    vin,
+    manufacturer,
+    description,
+    horsePower,
+    modelName,
+    modelYear,
+    purchasePrice,
+    fuelType,
+  } = req.body;
+
+  const insert_sql = 
+  `INSERT INTO vehicles
+    (vin, manufacturer, description, horse_power, model_name, model_year, purchase_price, fuel_type)
+  VALUES
+    ($1, $2, $3, $4, $5, $6, $7, $8)
+    RETURNING *
+  `;
+
+  const values = [
+    vin,
+    manufacturer,
+    description ?? null,
+    horsePower,
+    modelName,
+    modelYear,
+    purchasePrice,
+    fuelType,
+  ];
+
+  try{
+    const result = await pool.query(insert_sql, values);
+    const vehicle = rowToVehicle(result.rows[0]);
+    res.status(201).json(vehicle);
+  }catch(err){
+    if (err.code === "23505"){//handle unique vin violation (postgres error code 23505)
+      console.warn("VIN uniqueness violation:", err.detail);
+      return res.status(422).json({
+        error: "Validation failed",
+        details: {
+          vin: ["VIN must be unique (case-insensitive)"]
+        },
+      });
+
+    }else{
+      console.error("Error inserting vehicle:", err);
+      res.status(500).json({error: "Internal Server Error"});
+    }
+  }
+})
+
+app.get("/vehicle/:vin", async (req, res)=>{
+  const { vin } = req.params;
+
+  try {
+    const result = await pool.query(
+      "SELECT * FROM vehicles WHERE LOWER(vin) = LOWER($1)",
+      [vin]
+    );
+
+    if (result.rows.length === 0){
+      return res.status(404).json({error: "Vehicle not found"});
+    }
+
+    const vehicle = rowToVehicle(result.rows[0]);
+    res.json(vehicle);
+    
+  } catch (error) {
+    console.error("Error fetching vehicle by VIN:", err);
+    res.status(500).json({error: "Internal Server Error"});
+    
+  }
+})
 app.listen(port, hostname, function () {
   console.log(`http://${hostname}:${port}`);
 });
