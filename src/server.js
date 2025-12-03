@@ -291,6 +291,10 @@ app.delete("/vehicle/:vin", async (req, res)=>{
     res.status(500).json({error: "Internal Server Error"});
   }
 });
+
+export { app, pool };
+if (process.env.NODE_ENV !== "test") {
 app.listen(port, hostname, function () {
   console.log(`http://${hostname}:${port}`);
 });
+}
