@@ -101,7 +101,7 @@ app.get("/health", (req, res) => {
 
 app.get("/vehicle", async (req, res) => {
   try {
-    const result = await pool.query("SELECT * FROM vehicles ORDER BY id ASC");
+    const result = await pool.query("SELECT * FROM vehicles ORDER BY id ASC;");
     const vehicles = result.rows.map(rowToVehicle);
     res.json(vehicles);
   } catch (error) {
@@ -137,7 +137,7 @@ app.post("/vehicle", async(req, res) =>{
     (vin, manufacturer, description, horse_power, model_name, model_year, purchase_price, fuel_type)
   VALUES
     ($1, $2, $3, $4, $5, $6, $7, $8)
-    RETURNING *
+    RETURNING *;
   `;
 
   const values = [
@@ -177,7 +177,7 @@ app.get("/vehicle/:vin", async (req, res)=>{
 
   try {
     const result = await pool.query(
-      "SELECT * FROM vehicles WHERE LOWER(vin) = LOWER($1)",
+      "SELECT * FROM vehicles WHERE LOWER(vin) = LOWER($1);",
       [vin]
     );
 
@@ -194,6 +194,103 @@ app.get("/vehicle/:vin", async (req, res)=>{
     
   }
 })
+
+
+app.put("/vehicle/:vin", async (req, res)=>{
+  const pathVin = req.params.vin;
+  const {valid, errors} = validateVehiclePayload(req.body);
+
+  if (!valid){
+    return res.status(422).json({
+      error: "Validation failed",
+      details: errors,
+    });
+  }
+
+  if(
+    typeof req.body.vin === "string" &&
+    req.body.vin.toLowerCase() !== pathVin.toLowerCase()
+  ){
+    return res.status(422).json({
+      error: "Validation failed",
+      details: {
+        vin: ["VIN in body must match VIN in URL (case-insensitive)"]
+      }
+    })
+  }
+
+  const {
+    manufacturer,
+    description,
+    horsePower,
+    modelName,
+    modelYear,
+    purchasePrice,
+    fuelType,
+  } = req.body;
+
+  const updateSql = `
+  UPDATE vehicles
+    SET manufacturer = $2,
+        description = $3,
+        horse_power = $4,
+        model_name = $5,
+        model_year = $6,
+        purchase_price = $7,
+        fuel_type = $8
+  WHERE LOWER(vin) = LOWER($1)
+  RETURNING *;
+  `;
+
+  const values = [
+    pathVin,
+    manufacturer,
+    description ?? null,
+    horsePower,
+    modelName,
+    modelYear,
+    purchasePrice,
+    fuelType,
+  ];
+
+  try {
+    const result = await pool.query(updateSql, values);
+    if (result.rows.length === 0){ //no vehicle matched with that vin
+      return res.status(404).json({error: "Vehicle not found"})
+    }
+
+    const vehicle = rowToVehicle(result.rows[0]);
+    res.json(vehicle);
+
+  } catch (error) {
+    console.error("Error updating vehicle:", err);
+    res.status(500).json({error: "Internal Server Error"});
+  }
+})
+
+
+app.delete("/vehicle/:vin", async (req, res)=>{
+  const { vin } = req.params.vin;
+  const deleteSql = `
+  DELETE FROM vehicles
+    WHERE LOWER(vin) = LOWER($1)
+    RETURNING id;
+  `
+
+  try {
+    const result = await pool.query(deleteSql, [vin]);
+
+    if (result.rows.length === 0){
+      return res.status(404).json({error: "Vehicle not found"});
+    }
+
+    res.status(204).send();
+    
+  } catch (error) {
+    console.error("Error deleting vehicle:", err);
+    res.status(500).json({error: "Internal Server Error"});
+  }
+});
 app.listen(port, hostname, function () {
   console.log(`http://${hostname}:${port}`);
 });
